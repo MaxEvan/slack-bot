@@ -4,6 +4,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
 import { queryClaudeCode } from './claude-code';
 import { loadImages } from './images';
+import type { WebClient } from '@slack/web-api';
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -16,7 +17,7 @@ const teamId = required('SLACK_TEAM_ID');
 const useClaudeCode = process.env.CLAUDE_BACKEND === 'code';
 const model = echoMode ? '' : useClaudeCode ? process.env.ANTHROPIC_MODEL?.trim() || 'sonnet' : required('ANTHROPIC_MODEL');
 if (!echoMode && useClaudeCode) required('CLAUDE_CODE_OAUTH_TOKEN');
-const system = 'You are bot-x, a helpful assistant in a shared Slack thread. Answer concisely in plain text. User ID prefixes identify speakers. You only see messages addressed to you and your own replies. You have no tools or access to other Slack messages.';
+const system = 'You are bot-x, a helpful assistant in a shared Slack thread. Answer concisely in plain text. User ID prefixes identify speakers. You see the initial mention, subsequent user messages in this active thread, attached images, and your own replies. You have no tools or access to other Slack messages.';
 const claude = echoMode || useClaudeCode ? null : new Anthropic({
   apiKey: required('ANTHROPIC_API_KEY'), timeout: 60_000, maxRetries: 1,
 });
@@ -39,14 +40,31 @@ const cleanup = setInterval(() => {
 }, 60_000);
 cleanup.unref();
 
-app.event('app_mention', async ({ event, body, client, context }) => {
-  if (body.team_id !== teamId || event.bot_id || event.user === context.botUserId) return;
-  if (seen.has(body.event_id)) return;
-  seen.set(body.event_id, Date.now());
+type IncomingMessage = {
+  channel: string; ts: string; thread_ts?: string; text?: string;
+  user?: string; bot_id?: string; subtype?: string;
+  files?: { id?: string }[];
+};
+
+async function handleMessage(event: IncomingMessage, workspace: string | undefined, botUserId: string | undefined, client: WebClient, mention: boolean) {
+  if (workspace !== teamId || !event.user || event.bot_id || event.user === botUserId) return;
+  // Ignore edits, deletions, bot posts, and channel bookkeeping events.
+  if (event.subtype && !['file_share', 'thread_broadcast'].includes(event.subtype)) return;
   const thread = event.thread_ts ?? event.ts;
   const key = `${teamId}:${event.channel}:${thread}`;
-  const prompt = event.text.replaceAll(`<@${context.botUserId}>`, '').trim();
-  const files = (event as typeof event & { files?: { id?: string }[] }).files ?? [];
+  if (!mention) {
+    // Mentions arrive through app_mention too; let that listener own them.
+    if (event.text?.includes(`<@${botUserId}>`)) return;
+    const session = sessions.get(key);
+    const active = queues.has(key) || (session && Date.now() - session.updated < hour);
+    if (!event.thread_ts || event.thread_ts === event.ts || !active) return;
+  }
+  // Slack can deliver one message through multiple events with different event IDs.
+  const messageKey = `${teamId}:${event.channel}:${event.ts}`;
+  if (seen.has(messageKey)) return;
+  seen.set(messageKey, Date.now());
+  const prompt = (event.text ?? '').replaceAll(`<@${botUserId}>`, '').trim();
+  const files = event.files ?? [];
   const reply = async (text: string) => {
     for (let start = 0; start < text.length; start += 3000) {
       await client.chat.postMessage({
@@ -63,7 +81,12 @@ app.event('app_mention', async ({ event, body, client, context }) => {
 
   const previous = queues.get(key) ?? Promise.resolve();
   const task = previous.then(async () => {
-    if (echoMode) { await reply(`Slack connection works. You asked: ${prompt}`); return; }
+    if (echoMode) {
+      await reply(`Slack connection works. You asked: ${prompt}`);
+      if (sessions.size >= 200 && !sessions.has(key)) sessions.delete(sessions.keys().next().value!);
+      sessions.set(key, { messages: [], updated: Date.now() });
+      return;
+    }
     const session = sessions.get(key);
     const history = session && Date.now() - session.updated < hour ? session.messages : [];
     let images;
@@ -117,6 +140,15 @@ app.event('app_mention', async ({ event, body, client, context }) => {
   });
   queues.set(key, task);
   await task;
+}
+
+app.event('app_mention', async ({ event, body, client, context }) => {
+  await handleMessage(event, body.team_id, context.botUserId, client, true);
+});
+
+app.event('message', async ({ event, body, client, context }) => {
+  if (!('user' in event)) return;
+  await handleMessage(event, body.team_id, context.botUserId, client, false);
 });
 
 app.error(async () => { console.error('Slack connection error; check app configuration.'); });

@@ -14,9 +14,9 @@ Claude API usage is billed separately from a Max subscription. Configure billing
 
 ## Behavior and limits
 
-- Mention the bot again for each follow-up. Only bot-directed messages and its replies enter context.
+- Mention the bot once to start or join a thread. Subsequent human replies in that active thread automatically receive answers, including image attachments. Unrelated threads, top-level messages without mentions, edits, and bot messages are ignored.
 - All members who can mention the bot in the configured workspace can query it.
-- Thread history stays in memory: six exchanges, one-hour expiry, maximum 200 threads. Restarting clears history and retry deduplication.
+- Thread history stays in memory: six exchanges, one-hour expiry, maximum 200 threads. Restarting clears history, active-thread tracking, and retry deduplication. Mention the bot again after a restart or if the thread expires or is evicted.
 - At most four pending requests; requests within a thread run sequentially.
 - Input is capped at 12,000 characters and output at 1,200 tokens per request. There is no application-level daily spending cap or per-user quota yet.
 - No tools, non-image attachments, channel-history retrieval, or persistent storage. The Mac must stay awake and the process must stay running.
@@ -24,7 +24,9 @@ Claude API usage is billed separately from a Max subscription. Configure billing
 
 ## Manual verification
 
-Run `npm run check` to type-check. In echo mode, verify a mention gets one threaded reply and a follow-up stays in that thread. Enable Claude mode and check context recall, separate threads, and queries from a second member. Restart to verify that history resets.
+Run `npm run check` to type-check. In echo mode, verify a mention gets one threaded reply and a follow-up without a mention stays in that thread. Check that another mention produces only one reply, unrelated threads stay silent, and bot replies do not cause loops. Enable Claude mode and check context recall, separate threads, and queries from a second member. Restart to verify that history resets.
+
+For automatic thread replies, add `channels:history` and subscribe to `message.channels` for public channels; add `groups:history` and subscribe to `message.groups` for private channels. Keep `app_mention`, save changes, and reinstall the Slack app.
 
 ## Claude Code OAuth backend
 
@@ -36,7 +38,7 @@ Technical authentication support does not change Anthropic's credential rules: r
 
 ## Images
 
-Add the bot scope `files:read` and reinstall the Slack app. Upload images in the same message as the bot mention (including mentions in threads). PNG, JPEG, GIF, and WebP are supported: up to three images totaling 5 MB per message. PDFs, external links, and images posted separately without a mention are not retrieved.
+Add the bot scope `files:read` and reinstall the Slack app. Upload images with the initial bot mention or in a follow-up in an active thread. PNG, JPEG, GIF, and WebP are supported: up to three images totaling 5 MB per message. PDFs, external links, and images outside active threads without a mention are not retrieved.
 
 The bot downloads images from Slack with the bot token and passes native image content to Claude through either backend. Tools remain disabled. Downloads have timeouts, byte limits, and image signature checks. Image data stays in memory with the thread history; older exchanges are dropped above an 8 MB request budget, and stored conversation data is capped at approximately 64 MB globally. Reattach an image if it has fallen out of context.
 

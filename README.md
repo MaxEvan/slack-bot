@@ -18,6 +18,7 @@ Claude API usage is billed separately from a Max subscription. Configure billing
 - All members who can mention the bot in the configured workspace can query it.
 - Thread history stays in memory: six exchanges, one-hour expiry, maximum 200 threads. Restarting clears history, active-thread tracking, and retry deduplication. Mention the bot again after a restart or if the thread expires or is evicted.
 - At most four pending requests; requests within a thread run sequentially.
+- Accepted requests immediately show “Thinking…” in-thread, or a queued message while waiting for an earlier question. The status is replaced by the answer or error; long answers continue in additional replies. No additional Slack permissions are needed. A process interruption can leave a status message behind.
 - Input is capped at 12,000 characters and output at 1,200 tokens per request. There is no application-level daily spending cap or per-user quota yet.
 - No tools, non-image attachments, channel-history retrieval, or persistent storage. The Mac must stay awake and the process must stay running.
 - Shared thread context includes questions from other members in that thread.

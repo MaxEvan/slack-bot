@@ -65,8 +65,25 @@ async function handleMessage(event: IncomingMessage, workspace: string | undefin
   seen.set(messageKey, Date.now());
   const prompt = (event.text ?? '').replaceAll(`<@${botUserId}>`, '').trim();
   const files = event.files ?? [];
+  let statusTs: string | undefined;
   const reply = async (text: string) => {
     for (let start = 0; start < text.length; start += 3000) {
+      if (start === 0 && statusTs) {
+        const placeholderTs = statusTs;
+        try {
+          await client.chat.update({
+            channel: event.channel, ts: placeholderTs,
+            text: text.slice(0, 3000), parse: 'none',
+            blocks: [{ type: 'section', text: { type: 'plain_text', text: text.slice(0, 3000) } }],
+          });
+          statusTs = undefined;
+          continue;
+        } catch {
+          // If the placeholder can't be edited, still try to deliver the answer.
+          await client.chat.delete({ channel: event.channel, ts: placeholderTs }).catch(() => {});
+          statusTs = undefined;
+        }
+      }
       await client.chat.postMessage({
         channel: event.channel, thread_ts: thread,
         text: text.slice(start, start + 3000),
@@ -79,8 +96,21 @@ async function handleMessage(event: IncomingMessage, workspace: string | undefin
   if (pending >= 4) { await reply('I’m busy. Please try again shortly.'); return; }
   pending++;
 
+  const queued = queues.has(key);
   const previous = queues.get(key) ?? Promise.resolve();
+  // Start feedback immediately, but register the queue before awaiting Slack.
+  const statusReady = client.chat.postMessage({
+    channel: event.channel, thread_ts: thread,
+    text: queued ? 'Queued — I’ll respond after the previous question.' : 'Thinking…',
+    mrkdwn: false,
+  }).then(result => { statusTs = result.ts; }).catch(() => {
+    console.error('Could not post progress feedback; continuing the request.');
+  });
   const task = previous.then(async () => {
+    await statusReady;
+    if (queued && statusTs) {
+      await client.chat.update({ channel: event.channel, ts: statusTs, text: 'Thinking…', parse: 'none' }).catch(() => {});
+    }
     if (echoMode) {
       await reply(`Slack connection works. You asked: ${prompt}`);
       if (sessions.size >= 200 && !sessions.has(key)) sessions.delete(sessions.keys().next().value!);
@@ -132,8 +162,9 @@ async function handleMessage(event: IncomingMessage, workspace: string | undefin
       retained -= JSON.stringify(oldSession.messages).length;
       sessions.delete(oldKey);
     }
-  }).catch(() => {
+  }).catch(async () => {
     console.error('Slack reply failed; credentials and message content omitted.');
+    if (statusTs) await reply('Something went wrong. Please try again.').catch(() => {});
   }).finally(() => {
     pending--;
     if (queues.get(key) === task) queues.delete(key);

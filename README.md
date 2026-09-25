@@ -1,6 +1,6 @@
 # bot-x
 
-Local prototype: mention a private Slack bot and receive Claude API replies in-thread.
+Local prototype: mention a private Slack bot and receive Claude replies in-thread.
 
 ## Setup
 
@@ -25,3 +25,11 @@ Claude API usage is billed separately from a Max subscription. Configure billing
 ## Manual verification
 
 Run `npm run check` to type-check. In echo mode, verify a mention gets one threaded reply and a follow-up stays in that thread. Enable Claude mode and check context recall, separate threads, and queries from a second member. Restart to verify that history resets.
+
+## Claude Code OAuth backend
+
+Requires the installed Claude Code CLI with `--safe-mode` support (verified with 2.1.236). Set `CLAUDE_BACKEND=code`, `CLAUDE_CODE_OAUTH_TOKEN` to your subscription token, `ANTHROPIC_MODEL=sonnet`, and `ECHO_MODE=false`. Obtain the token through Claude Code's `claude setup-token` flow. Keep it only in the ignored `.env` file.
+
+This backend invokes the unmodified Claude Code CLI, with tools, MCP servers, customizations, and session persistence disabled. Each request runs in a temporary directory, receives only the current thread's bounded history, and has a two-minute timeout. Slack credentials are not passed to the CLI. Answers are capped at 12,000 characters; the API backend's 1,200-token generation cap does not apply to CLI mode.
+
+Technical authentication support does not change Anthropic's credential rules: routing other users' requests through one person's Max credentials is restricted. Use the API backend for the shared organization deployment. Subscription usage and limits apply to the CLI path under the provider's current billing rules.

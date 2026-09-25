@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { App } from '@slack/bolt';
 import Anthropic from '@anthropic-ai/sdk';
 import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
+import { queryClaudeCode } from './claude-code';
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -11,8 +12,11 @@ function required(name: string): string {
 
 const echoMode = process.env.ECHO_MODE === 'true';
 const teamId = required('SLACK_TEAM_ID');
-const model = echoMode ? '' : required('ANTHROPIC_MODEL');
-const claude = echoMode ? null : new Anthropic({
+const useClaudeCode = process.env.CLAUDE_BACKEND === 'code';
+const model = echoMode ? '' : useClaudeCode ? process.env.ANTHROPIC_MODEL?.trim() || 'sonnet' : required('ANTHROPIC_MODEL');
+if (!echoMode && useClaudeCode) required('CLAUDE_CODE_OAUTH_TOKEN');
+const system = 'You are bot-x, a helpful assistant in a shared Slack thread. Answer concisely in plain text. User ID prefixes identify speakers. You only see messages addressed to you and your own replies. You have no tools or access to other Slack messages.';
+const claude = echoMode || useClaudeCode ? null : new Anthropic({
   apiKey: required('ANTHROPIC_API_KEY'), timeout: 60_000, maxRetries: 1,
 });
 const app = new App({
@@ -63,16 +67,21 @@ app.event('app_mention', async ({ event, body, client, context }) => {
     const messages: MessageParam[] = [...history, { role: 'user', content: `<@${event.user}>: ${prompt}` }];
     let answer: string;
     try {
+      if (useClaudeCode) {
+        answer = await queryClaudeCode(JSON.stringify(messages), system, model);
+        console.info('Claude Code request completed.');
+      } else {
       const result = await claude!.messages.create({
         model, max_tokens: 1200,
-        system: 'You are bot-x, a helpful assistant in a shared Slack thread. Answer concisely in plain text. User ID prefixes identify speakers. You only see messages addressed to you and your own replies. You have no tools or access to other Slack messages.',
+        system,
         messages,
       });
       answer = result.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n') || 'No text response was returned.';
       console.info('Claude request completed', { inputTokens: result.usage.input_tokens, outputTokens: result.usage.output_tokens });
+      }
     } catch {
       console.error('Claude request failed; credentials and message content omitted.');
-      await reply('I couldn’t get a response from Claude. Please try again shortly; if it persists, ask the bot owner to check API configuration and billing.');
+      await reply('I couldn’t get a response from Claude. Please try again shortly; if it persists, ask the bot owner to check authentication and usage limits.');
       return;
     }
     await reply(answer);
@@ -96,7 +105,7 @@ async function main() {
   const identity = await app.client.auth.test();
   if (identity.team_id !== teamId) throw new Error('SLACK_TEAM_ID does not match the bot token workspace.');
   await app.start();
-  console.info(`bot-x running in ${echoMode ? 'echo' : 'Claude API'} mode.`);
+  console.info(`bot-x running in ${echoMode ? 'echo' : useClaudeCode ? 'Claude Code' : 'Claude API'} mode.`);
 }
 
 for (const signal of ['SIGINT', 'SIGTERM']) {

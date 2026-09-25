@@ -19,7 +19,7 @@ Claude API usage is billed separately from a Max subscription. Configure billing
 - Thread history stays in memory: six exchanges, one-hour expiry, maximum 200 threads. Restarting clears history and retry deduplication.
 - At most four pending requests; requests within a thread run sequentially.
 - Input is capped at 12,000 characters and output at 1,200 tokens per request. There is no application-level daily spending cap or per-user quota yet.
-- No tools, attachments, channel-history retrieval, or persistent storage. The Mac must stay awake and the process must stay running.
+- No tools, non-image attachments, channel-history retrieval, or persistent storage. The Mac must stay awake and the process must stay running.
 - Shared thread context includes questions from other members in that thread.
 
 ## Manual verification
@@ -33,3 +33,11 @@ Requires the installed Claude Code CLI with `--safe-mode` support (verified with
 This backend invokes the unmodified Claude Code CLI, with tools, MCP servers, customizations, and session persistence disabled. Each request runs in a temporary directory, receives only the current thread's bounded history, and has a two-minute timeout. Slack credentials are not passed to the CLI. Answers are capped at 12,000 characters; the API backend's 1,200-token generation cap does not apply to CLI mode.
 
 Technical authentication support does not change Anthropic's credential rules: routing other users' requests through one person's Max credentials is restricted. Use the API backend for the shared organization deployment. Subscription usage and limits apply to the CLI path under the provider's current billing rules.
+
+## Images
+
+Add the bot scope `files:read` and reinstall the Slack app. Upload images in the same message as the bot mention (including mentions in threads). PNG, JPEG, GIF, and WebP are supported: up to three images totaling 5 MB per message. PDFs, external links, and images posted separately without a mention are not retrieved.
+
+The bot downloads images from Slack with the bot token and passes native image content to Claude through either backend. Tools remain disabled. Downloads have timeouts, byte limits, and image signature checks. Image data stays in memory with the thread history; older exchanges are dropped above an 8 MB request budget, and stored conversation data is capped at approximately 64 MB globally. Reattach an image if it has fallen out of context.
+
+To check manually, mention the bot with an image and ask what it shows, then mention it again in the thread with a follow-up. Unsupported or oversized attachments should receive an explanatory reply.

@@ -3,6 +3,7 @@ import { App } from '@slack/bolt';
 import Anthropic from '@anthropic-ai/sdk';
 import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
 import { queryClaudeCode } from './claude-code';
+import { loadImages } from './images';
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -45,6 +46,7 @@ app.event('app_mention', async ({ event, body, client, context }) => {
   const thread = event.thread_ts ?? event.ts;
   const key = `${teamId}:${event.channel}:${thread}`;
   const prompt = event.text.replaceAll(`<@${context.botUserId}>`, '').trim();
+  const files = (event as typeof event & { files?: { id?: string }[] }).files ?? [];
   const reply = async (text: string) => {
     for (let start = 0; start < text.length; start += 3000) {
       await client.chat.postMessage({
@@ -54,7 +56,7 @@ app.event('app_mention', async ({ event, body, client, context }) => {
       });
     }
   };
-  if (!prompt) { await reply('Mention me with a question.'); return; }
+  if (!prompt && !files.length) { await reply('Mention me with a question.'); return; }
   if (prompt.length > 12_000) { await reply('Please shorten your question to 12,000 characters.'); return; }
   if (pending >= 4) { await reply('I’m busy. Please try again shortly.'); return; }
   pending++;
@@ -64,11 +66,22 @@ app.event('app_mention', async ({ event, body, client, context }) => {
     if (echoMode) { await reply(`Slack connection works. You asked: ${prompt}`); return; }
     const session = sessions.get(key);
     const history = session && Date.now() - session.updated < hour ? session.messages : [];
-    const messages: MessageParam[] = [...history, { role: 'user', content: `<@${event.user}>: ${prompt}` }];
+    let images;
+    try { images = await loadImages(files, client, required('SLACK_BOT_TOKEN')); }
+    catch (error) {
+      const message = error instanceof Error && !error.message.includes('fetch') ? error.message : 'I couldn’t download the image. Please upload it again.';
+      await reply(message);
+      return;
+    }
+    const messages: MessageParam[] = [...history, { role: 'user', content: [
+      { type: 'text', text: `<@${event.user}>: ${prompt || 'Describe the attached image.'}` }, ...images,
+    ] }];
+    // Leave headroom below the CLI's stdin limit when old turns contain images.
+    while (messages.length > 1 && JSON.stringify(messages).length > 8 * 1024 * 1024) messages.splice(0, 2);
     let answer: string;
     try {
       if (useClaudeCode) {
-        answer = await queryClaudeCode(JSON.stringify(messages), system, model);
+        answer = await queryClaudeCode(messages, system, model);
         console.info('Claude Code request completed.');
       } else {
       const result = await claude!.messages.create({
@@ -89,6 +102,13 @@ app.event('app_mention', async ({ event, body, client, context }) => {
     if (sessions.size >= 200 && !sessions.has(key)) sessions.delete(sessions.keys().next().value!);
     const completed: MessageParam[] = [...messages, { role: 'assistant', content: answer }];
     sessions.set(key, { messages: completed.slice(-12), updated: Date.now() });
+    // Bound retained base64 image data across all conversations to about 64 MB.
+    let retained = [...sessions.values()].reduce((sum, session) => sum + JSON.stringify(session.messages).length, 0);
+    for (const [oldKey, oldSession] of sessions) {
+      if (retained <= 64 * 1024 * 1024) break;
+      retained -= JSON.stringify(oldSession.messages).length;
+      sessions.delete(oldKey);
+    }
   }).catch(() => {
     console.error('Slack reply failed; credentials and message content omitted.');
   }).finally(() => {

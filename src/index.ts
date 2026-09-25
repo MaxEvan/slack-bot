@@ -74,7 +74,7 @@ async function handleMessage(event: IncomingMessage, workspace: string | undefin
           await client.chat.update({
             channel: event.channel, ts: placeholderTs,
             text: text.slice(0, 3000), parse: 'none',
-            blocks: [{ type: 'section', text: { type: 'plain_text', text: text.slice(0, 3000) } }],
+            blocks: [{ type: 'section', expand: true, text: { type: 'plain_text', text: text.slice(0, 3000) } }],
           });
           statusTs = undefined;
           continue;
@@ -87,6 +87,7 @@ async function handleMessage(event: IncomingMessage, workspace: string | undefin
       await client.chat.postMessage({
         channel: event.channel, thread_ts: thread,
         text: text.slice(start, start + 3000),
+        blocks: [{ type: 'section', expand: true, text: { type: 'plain_text', text: text.slice(start, start + 3000) } }],
         mrkdwn: false, parse: 'none', unfurl_links: false, unfurl_media: false,
       });
     }

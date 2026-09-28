@@ -1,6 +1,6 @@
 # bot-x
 
-A Slack bot that answers with Claude in threads and understands image attachments.
+A Slack bot that answers with Codex or Claude in threads and understands image attachments.
 
 ## Slack setup
 
@@ -24,8 +24,9 @@ cp .env.example .env
 
 Fill in `.env`; [.env.example](.env.example) explains every setting. Choose a backend:
 
-- **API:** `CLAUDE_BACKEND=api`, with an Anthropic API key and model ID.
-- **Claude Code:** install the Claude Code CLI with `--safe-mode` support, run `claude setup-token`, and set `CLAUDE_BACKEND=code` plus `CLAUDE_CODE_OAUTH_TOKEN`.
+- **Codex:** install Codex CLI (verified with 0.157.0), run `codex login` with ChatGPT, and set `BOT_BACKEND=codex`. Optionally set `CODEX_MODEL`; no API key needed.
+- **API:** `BOT_BACKEND=api`, with an Anthropic API key and model ID.
+- **Claude Code:** install the Claude Code CLI with `--safe-mode` support, run `claude setup-token`, and set `BOT_BACKEND=code` plus `CLAUDE_CODE_OAUTH_TOKEN`.
 
 ```sh
 npm start
